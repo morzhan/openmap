@@ -1,5 +1,6 @@
 """Navigation behavior checks in Lua 5.1; run with python tools/offline-test/navigation.py."""
 from pathlib import Path
+import runpy
 import unittest
 
 from lupa.lua51 import LuaRuntime
@@ -230,6 +231,124 @@ class NavigationTests(unittest.TestCase):
                 selected[3](false)
                 assert(selected[2]()) -- the current choice cannot be deselected
             end
+        """)
+
+
+class PadReopenTests(unittest.TestCase):
+    def setUp(self):
+        self.lua = LuaRuntime(unpack_returned_tuples=True)
+        stub = runpy.run_path(str(Path(__file__).with_name("padwaypoint.py")))["STUB"]
+        self.lua.execute(stub)
+        self.lua.execute("""
+            mod.defaults = {}
+            playerX, playerY = .3, .3
+            C_Map.GetBestMapForUnit = function() return 1429 end
+            C_Map.GetPlayerMapPosition = function()
+                if playerX then return { x = playerX, y = playerY } end
+            end
+            C_Map.GetMapInfo = function() return { mapType = Enum.UIMapType.Zone } end
+            function S.ArtSize() return 400, 200 end
+            function S.Stitched() return true end
+            function mod.ToWorld(id, x, y)
+                local l, r, t, b = S.Rect(id)
+                return l + x * (r - l), t + y * (b - t)
+            end
+            function mod.HostMap() end -- the usual map isn't set up with the controller view on
+            function mod.ViewHalfExtents() error('the usual map has no scroll container') end
+            function WorldMapFrame:SetMapID() error('changed Blizzard map') end
+            function WorldMapFrame.ScrollContainer:ResetZoom() error('changed Blizzard zoom') end
+        """)
+        core = (ROOT / "Core.lua").read_text(encoding="utf-8")
+        start = core.index("function Safe.Finite(")
+        self.lua.execute("local Safe = ns.Safe\n" + core[start:core.index("\nend\n", start) + 5])
+        for name in ("Nav", "PadView"):
+            self.lua.execute((ROOT / f"Map/{name}.lua").read_text(encoding="utf-8"),
+                             "OpenMap", self.lua.globals().ns)
+        self.lua.execute("""
+            mod.BuildNav, mod.RefreshGroup = nil, nil -- pins aren't needed to check the opening view
+            function CheckView(wantU, wantV, wantZoom)
+                local u, v, zoom = mod.ViewNow()
+                assert(math.abs(u - wantU) < 1e-8, 'wrong horizontal centre: ' .. u)
+                assert(math.abs(v - wantV) < 1e-8, 'wrong vertical centre: ' .. v)
+                assert(math.abs(zoom - wantZoom) < 1e-8, 'wrong zoom: ' .. zoom)
+            end
+            function Reopen()
+                WorldMapFrame:Hide()
+                playerX, playerY = .8, .7
+                WorldMapFrame:Show()
+                Tick()
+            end
+        """)
+
+    def test_default_centers_on_player_on_every_open(self):
+        self.lua.execute("""
+            Open()
+            CheckView(.46, .51, 5)
+            mod.ShowNow(.8, .3, 12)
+            Reopen()
+            CheckView(.56, .59, 5)
+        """)
+
+    def test_player_can_keep_zoom(self):
+        self.lua.execute("""
+            mod.db.reopenView = 'zoom'
+            Open()
+            mod.ShowNow(.8, .3, 12)
+            Reopen()
+            CheckView(.56, .59, 12)
+        """)
+
+    def test_zone_choice_centers_the_zone(self):
+        self.lua.execute("""
+            mod.db.reopenView = 'inzone'
+            Open()
+            CheckView(.5, .55, 5)
+            mod.ShowNow(.8, .3, 12)
+            Reopen()
+            CheckView(.5, .55, 5)
+        """)
+
+    def test_always_remember_preserves_the_view(self):
+        self.lua.execute("""
+            mod.db.reopenView = 'always'
+            Open()
+            mod.ShowNow(.8, .3, 12)
+            Reopen()
+            CheckView(.8, .3, 12)
+        """)
+
+    def test_visible_choice_uses_controller_view_extents(self):
+        self.lua.execute("""
+            mod.db.reopenView = 'visible'
+            Open()
+            mod.ShowNow(.5, .55, 10)
+            WorldMapFrame:Hide()
+            playerX, playerY = .6, .6
+            WorldMapFrame:Show()
+            Tick()
+            CheckView(.5, .55, 10)
+            Reopen()
+            CheckView(.56, .59, 5)
+        """)
+
+    def test_unknown_player_position_preserves_the_view(self):
+        self.lua.execute("""
+            Open()
+            mod.ShowNow(.8, .3, 12)
+            WorldMapFrame:Hide()
+            playerX = nil
+            WorldMapFrame:Show()
+            Tick()
+            CheckView(.8, .3, 12)
+        """)
+
+    def test_input_transition_while_open_preserves_browsing(self):
+        self.lua.execute("""
+            Open()
+            mod.ShowNow(.8, .3, 12)
+            events.INPUT_DEVICE_INTERFACE_TRANSITION()
+            Tick()
+            CheckView(.8, .3, 12)
         """)
 
 

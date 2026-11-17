@@ -663,6 +663,11 @@ local function Build()
 	mod.Glide = function(tu, tv, tz) GlideTo(tu, tv, tz or zoom) end
 	mod.ViewNow = function() return u, v, zoom end
 	mod.FitZoom = function(id) return FitZoom(id) end
+	mod.ViewHalfExtents = function(z)
+		local W, H = S.Size()
+		local px = FitPx() * z
+		return view:GetWidth() / 2 / (W * px), view:GetHeight() / 2 / (H * px)
+	end
 	mod.ShowNow = function(tu, tv, tz)
 		glide = nil
 		u, v, zoom = tu, tv, Clamp(tz or zoom, 1, MostAt(tu, tv))
@@ -723,7 +728,7 @@ local function Build()
 	return true
 end
 
--- the view to open on: where it was, else around you, your zone filling it
+-- the first opening's fallback when Nav.lua has no player position
 local function FirstView()
 	UpdatePlayer()
 	local best = C_Map.GetBestMapForUnit("player")
@@ -753,7 +758,13 @@ local function Show()
 		if built then sc.Child:SetAlpha(1) end
 		return
 	end
-	if not u then FirstView() end
+	if not view:IsShown() then
+		-- Nav.lua's reopen choice, on our own view: Blizzard's map underneath stays untouched.
+		local tu, tv, tz
+		if mod.SavedView then tu, tv, tz = mod.SavedView() end
+		if tu then u, v, zoom = tu, tv, tz
+		elseif not u then FirstView() end
+	end
 	HoldPins()
 	ScanQuestie()
 	if mod.PadQuestiePaths then pcall(mod.PadQuestiePaths, true) end   -- (Questie's mob paths: Extras.lua's)
@@ -764,6 +775,7 @@ local function Show()
 end
 
 local function Hide()
+	if built and view:IsShown() and mod.OnMapHidden then mod:OnMapHidden() end
 	Enter(nil)
 	if mod.PadQuestiePaths then pcall(mod.PadQuestiePaths, false) end
 	if mod.DungeonViewShown and mod.DungeonViewShown() and mod.CloseDungeonView then pcall(mod.CloseDungeonView) end

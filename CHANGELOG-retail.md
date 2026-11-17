@@ -1,5 +1,13 @@
 # OpenMap changelog
 
+## Unreleased
+
+### Fixed
+
+- **The controller view follows "When reopening the map"**: it kept the last position and zoom
+  after the first opening, even with "Center on player" selected. It now follows all five reopening
+  choices, centring on you each time with "Center on player".
+
 ## v0.8.10 (2026-11-16)
 
 ### Fixed
